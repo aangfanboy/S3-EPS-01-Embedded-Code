@@ -1,0 +1,17 @@
+../Core/Src/main.c:125:19:EPS_Set_Fuse_State	1
+../Core/Src/main.c:132:19:EPS_Set_Buck_State	1
+../Core/Src/main.c:139:10:Build_CAN_ID_FromStruct	1
+../Core/Src/main.c:153:6:CAN_Send_ADC15_Segmented	9
+../Core/Src/main.c:197:6:CAN_Send_EPS_Heartbeat	1
+../Core/Src/main.c:218:6:CAN_Send_EPS_Housekeeping	21
+../Core/Src/main.c:303:6:CAN_Send_Voltages	5
+../Core/Src/main.c:365:6:CAN_Send_Currents	7
+../Core/Src/main.c:422:6:CAN_Send_PowerGood	10
+../Core/Src/main.c:461:5:main	24
+../Core/Src/main.c:597:6:SystemClock_Config	3
+../Core/Src/main.c:644:13:MX_ADC1_Init	17
+../Core/Src/main.c:822:13:MX_CAN1_Init	2
+../Core/Src/main.c:857:13:MX_DMA_Init	1
+../Core/Src/main.c:875:13:MX_GPIO_Init	1
+../Core/Src/main.c:975:6:HAL_CAN_RxFifo0MsgPendingCallback	11
+../Core/Src/main.c:1050:6:Error_Handler	1
