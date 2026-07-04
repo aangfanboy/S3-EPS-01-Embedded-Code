@@ -34,34 +34,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := umutKart
+BUILD_ARTIFACT_NAME := S3-EPS-01-Embedded-Code
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-umutKart.elf \
+S3-EPS-01-Embedded-Code.elf \
 
 MAP_FILES += \
-umutKart.map \
+S3-EPS-01-Embedded-Code.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-umutKart.list \
+S3-EPS-01-Embedded-Code.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: umutKart.elf secondary-outputs
+main-build: S3-EPS-01-Embedded-Code.elf secondary-outputs
 
 # Tool invocations
-umutKart.elf umutKart.map: $(OBJS) $(USER_OBJS) C:\Users\S3Lab\Desktop\burak\umutkod\STM32F446VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "umutKart.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\S3Lab\Desktop\burak\umutkod\STM32F446VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="umutKart.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+S3-EPS-01-Embedded-Code.elf S3-EPS-01-Embedded-Code.map: $(OBJS) $(USER_OBJS) C:\Users\S3Lab\Desktop\EmbeddedCodes\S3-EPS-01-Embedded-Code\STM32F446VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "S3-EPS-01-Embedded-Code.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\S3Lab\Desktop\EmbeddedCodes\S3-EPS-01-Embedded-Code\STM32F446VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="S3-EPS-01-Embedded-Code.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -70,14 +70,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-umutKart.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "umutKart.list"
+S3-EPS-01-Embedded-Code.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "S3-EPS-01-Embedded-Code.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout umutKart.elf umutKart.list umutKart.map
+	-$(RM) S3-EPS-01-Embedded-Code.elf S3-EPS-01-Embedded-Code.list S3-EPS-01-Embedded-Code.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

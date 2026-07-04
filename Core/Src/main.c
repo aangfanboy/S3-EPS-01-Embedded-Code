@@ -45,6 +45,8 @@ typedef struct{
 #define MSG_ID_READ_CURRENT_CHANNEL 0x70
 #define MSG_ID_EPS_HEARTBEAT 0x65
 #define MSG_ID_POWER_GOOD_SIGNAL 0x71
+#define MSG_ID_OPEN_BUCK_SIGNAL 0x72
+#define MSG_ID_OPEN_CHANNEL_SIGNAL 0x73
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,6 +83,37 @@ uint8_t powergood_request_flag = 0;
 
 uint32_t canRecCounter = 0;
 
+uint16_t deger;
+uint16_t deger2;
+HAL_StatusTypeDef generalStatus;
+
+typedef struct {
+    GPIO_TypeDef* port;
+    uint16_t      pin;
+} GPIOPin_Map_t;
+
+const GPIOPin_Map_t gpioBUCK_map[] = {
+		{EN_B_2_GPIO_Port, EN_B_2_Pin}, // placeholder for int0
+		{EN_B_2_GPIO_Port, EN_B_2_Pin}, // placeholder for int1
+		{EN_B_2_GPIO_Port, EN_B_2_Pin}, // int2
+		{EN_B_3_GPIO_Port, EN_B_3_Pin}, // int3
+		{EN_B_4_GPIO_Port, EN_B_4_Pin}, // int4
+		{EN_B_5_GPIO_Port, EN_B_5_Pin}  // int5
+};
+
+const GPIOPin_Map_t gpioFUSE_map[] = {
+		{EN_F_1_GPIO_Port, EN_F_1_Pin},
+		{EN_F_2_GPIO_Port, EN_F_2_Pin},
+		{EN_F_3_GPIO_Port, EN_F_3_Pin},
+		{EN_F_4_GPIO_Port, EN_F_4_Pin},
+		{EN_F_5_GPIO_Port, EN_F_5_Pin},
+		{EN_F_6_GPIO_Port, EN_F_6_Pin},
+		{EN_F_7_GPIO_Port, EN_F_7_Pin},
+		{EN_F_8_GPIO_Port, EN_F_8_Pin},
+		{EN_F_9_GPIO_Port, EN_F_9_Pin},
+		{EN_F_10_GPIO_Port, EN_F_10_Pin},
+};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,6 +131,7 @@ void CAN_Send_EPS_Housekeeping(void);
 void CAN_Send_Voltages(void);
 void CAN_Send_Currents(void);
 void CAN_Send_PowerGood(void);
+void CAN_Verify_Open(uint16_t, uint8_t, HAL_StatusTypeDef, uint8_t);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -419,6 +453,32 @@ void CAN_Send_Currents(void){
     }
 }
 
+void CAN_Verify_Open(uint16_t channelBuckId, uint8_t messageId, HAL_StatusTypeDef endStatus, uint8_t isToOpen){
+    METUCube_CAN_ID_t can_id;
+    can_id.priority = 0x03;
+    can_id.sender = 0x03;
+    can_id.receiver = 0x00;
+    can_id.message_id = messageId;
+    can_id.seq_type = 0x03;
+	can_id.seq_count = 0x00;
+
+	uint8_t statusToSend = (uint8_t)endStatus;
+
+	txData[0] = channelBuckId & 0xFF;
+	txData[1] = (channelBuckId >> 8) & 0xFF;
+	txData[2] = statusToSend & 0xFF;
+	txData[3] = (statusToSend >> 8) & 0xFF;
+	txData[4] = isToOpen;
+
+    txHeader.ExtId = Build_CAN_ID_FromStruct(&can_id);
+    txHeader.IDE = CAN_ID_EXT;
+    txHeader.RTR = CAN_RTR_DATA;
+    txHeader.TransmitGlobalTime = DISABLE;
+
+	HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+}
+
+
 void CAN_Send_PowerGood(void){
 
     METUCube_CAN_ID_t can_id;
@@ -487,23 +547,43 @@ int main(void)
   MX_ADC1_Init();
   MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
-  if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
 
   HAL_Delay(100);
 
-  if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+  HAL_Delay(100);
+
+
+  //if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+
+  HAL_Delay(100);
+
+  //if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
   if(EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
+  //if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
 
   HAL_Delay(500);
 
@@ -556,8 +636,7 @@ int main(void)
 
 	  if (killSwitchStatus == GPIO_PIN_RESET) {
 		  HAL_Delay(1000);
-	  } else {
-		  HAL_Delay(1000);
+		  continue;
 	  }
 
 	  if(adc_request_flag){
@@ -1037,6 +1116,52 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
     if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&powergood_req_id)){
         powergood_request_flag = 1;
+    }
+
+    //// open buck request
+    METUCube_CAN_ID_t openbuck_req_id;
+    openbuck_req_id.priority = 0x03;
+    openbuck_req_id.sender = 0x00;
+    openbuck_req_id.receiver = 0x03;
+    openbuck_req_id.message_id = MSG_ID_OPEN_BUCK_SIGNAL;
+    openbuck_req_id.seq_type = 0x03;
+    openbuck_req_id.seq_count = 0;
+
+    if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&openbuck_req_id)){
+    	deger =  rxData[0] | (rxData[1] << 8);
+
+    	if (rxData[4] == 1){
+    		generalStatus = EPS_Set_Buck_State(gpioBUCK_map[deger].port, gpioBUCK_map[deger].pin, GPIO_PIN_SET);
+		} else if (rxData[4] == 0) {
+			generalStatus = EPS_Set_Buck_State(gpioBUCK_map[deger].port, gpioBUCK_map[deger].pin, GPIO_PIN_RESET);
+		}	else {
+		    generalStatus = HAL_ERROR;
+		}
+
+    	CAN_Verify_Open(deger, MSG_ID_OPEN_BUCK_SIGNAL, generalStatus, rxData[4]);
+    }
+
+    //// open channel request
+    METUCube_CAN_ID_t openchannel_req_id;
+    openchannel_req_id.priority = 0x03;
+    openchannel_req_id.sender = 0x00;
+    openchannel_req_id.receiver = 0x03;
+    openchannel_req_id.message_id = MSG_ID_OPEN_CHANNEL_SIGNAL;
+    openchannel_req_id.seq_type = 0x03;
+    openchannel_req_id.seq_count = 0;
+
+    if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&openchannel_req_id)){
+    	deger =  rxData[0] | (rxData[1] << 8);
+
+    	if (rxData[4] == 1){
+    		generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[deger].port, gpioFUSE_map[deger].pin, GPIO_PIN_SET);
+    	} else if (rxData[4] == 0) {
+    		generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[deger].port, gpioFUSE_map[deger].pin, GPIO_PIN_RESET);
+    	}	else {
+    	    generalStatus = HAL_ERROR;
+    	}
+
+    	CAN_Verify_Open(deger, MSG_ID_OPEN_CHANNEL_SIGNAL, generalStatus, rxData[4]);
     }
 
 }
