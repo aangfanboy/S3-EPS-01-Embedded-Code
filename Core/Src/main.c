@@ -102,6 +102,7 @@ const GPIOPin_Map_t gpioBUCK_map[] = {
 };
 
 const GPIOPin_Map_t gpioFUSE_map[] = {
+		{EN_F_1_GPIO_Port, EN_F_1_Pin}, // placeholder for int0
 		{EN_F_1_GPIO_Port, EN_F_1_Pin},
 		{EN_F_2_GPIO_Port, EN_F_2_Pin},
 		{EN_F_3_GPIO_Port, EN_F_3_Pin},
