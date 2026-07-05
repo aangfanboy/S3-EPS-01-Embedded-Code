@@ -83,17 +83,7 @@ uint8_t rxData[8];
 
 uint16_t resistors[10];
 
-uint8_t adc_request_flag = 0 ;
-
 uint32_t last_heartbeat_time = 0;
-
-uint8_t housekeeping_request_flag = 0;
-
-uint8_t voltage_request_flag = 0;
-
-uint8_t current_request_flag = 0;
-
-uint8_t powergood_request_flag = 0;
 
 volatile uint8_t high_head = 0;
 volatile uint8_t low_head = 0;
@@ -236,29 +226,31 @@ uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile 
   return 1;
 }
 void CAN_ProcessQueueElement(CAN_queue_element *element){
+
   switch (element->message_id){
     case MSG_ID_ADC_REQUEST:
-      adc_request_flag = 1;
+    	CAN_Send_ADC15_Segmented();
       break;
     case MSG_ID_EPS_HOUSEKEEPING:
-      housekeeping_request_flag = 1;
+    	CAN_Send_EPS_Housekeeping();
       break;
     case MSG_ID_READ_VOLTAGE_CHANNEL:
-      voltage_request_flag = 1;
+    	CAN_Send_Voltages();
       break;
     case MSG_ID_READ_CURRENT_CHANNEL:
-      current_request_flag = 1;
+    	CAN_Send_Currents();
       break;
     case MSG_ID_POWER_GOOD_SIGNAL:
-      powergood_request_flag = 1;
+    	CAN_Send_PowerGood();
       break;
     case MSG_ID_OPEN_BUCK_SIGNAL:
-      Handle_OpenBuck(element);
+    	Handle_OpenBuck(element);
       break;
     case MSG_ID_OPEN_CHANNEL_SIGNAL:
-      Handle_OpenChannel(element);
+    	Handle_OpenChannel(element);
       break;
     default:
+
       break;
     }
 }
@@ -757,34 +749,13 @@ int main(void)
 		  continue;
 	  }
 
-    CAN_ProcessQueue();
-
-	  if(adc_request_flag){
-		  adc_request_flag = 0;
-		  CAN_Send_ADC15_Segmented();
-	  }
-
 	  if(HAL_GetTick() - last_heartbeat_time >= 1000) {
 		  last_heartbeat_time = HAL_GetTick();
 	      CAN_Send_EPS_Heartbeat();
 	  }
 
-	  if(housekeeping_request_flag){
-		  housekeeping_request_flag = 0;
-		  CAN_Send_EPS_Housekeeping();
-	  }
-	  if(voltage_request_flag){
-		  voltage_request_flag = 0;
-		  CAN_Send_Voltages();
-	  }
-	  if (current_request_flag) {
-	      current_request_flag = 0;
-	      CAN_Send_Currents();
-	  }
-	  if (powergood_request_flag){
-		  powergood_request_flag = 0;
-		  CAN_Send_PowerGood();
-	  }
+	  CAN_ProcessQueue();
+
   }
   /* USER CODE END 3 */
 }
