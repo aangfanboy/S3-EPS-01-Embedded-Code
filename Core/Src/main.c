@@ -58,6 +58,7 @@ typedef struct{
 #define MSG_ID_POWER_GOOD_SIGNAL 0x71
 #define MSG_ID_OPEN_BUCK_SIGNAL 0x72
 #define MSG_ID_OPEN_CHANNEL_SIGNAL 0x73
+#define MSG_ID_OBC_HEARTBEAT 0x00
 #define CAN_QUEUE_SIZE 50
 #define EPS_ID 0x03
 #define BROADCAST_ID 0x0F
@@ -84,6 +85,12 @@ uint8_t rxData[8];
 uint16_t resistors[10];
 
 uint32_t last_heartbeat_time = 0;
+uint32_t last_OBC_heartbeat_time = 0;
+const uint32_t heartbeat_interval = 1000;
+const uint32_t OBC_heartbeat_reset_time = 10000;
+
+uint32_t resetOBCCounter = 0;
+const uint32_t resetOBCCounterMax = 5;
 
 volatile uint8_t high_head = 0;
 volatile uint8_t low_head = 0;
@@ -179,18 +186,26 @@ GPIO_PinState pGodF10status;
 GPIO_PinState EN7READ;
 GPIO_PinState EN8READ;
 
-HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state)
-{
+HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state){
     HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
 
     return HAL_OK;
 }
 
-HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state)
-{
+HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state){
     HAL_GPIO_WritePin(buck_port, buck_pin, state);
 
     return HAL_OK;
+}
+
+HAL_StatusTypeDef RESET_OBC_CHANNEL(void) {
+	HAL_StatusTypeDef jobStatus;
+
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_RESET);
+	HAL_Delay(100);
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET);
+
+	return jobStatus;
 }
 
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id) {
@@ -225,6 +240,7 @@ uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile 
   *tail = (*tail + 1) % CAN_QUEUE_SIZE;
   return 1;
 }
+
 void CAN_ProcessQueueElement(CAN_queue_element *element){
 
   switch (element->message_id){
@@ -249,6 +265,10 @@ void CAN_ProcessQueueElement(CAN_queue_element *element){
     case MSG_ID_OPEN_CHANNEL_SIGNAL:
     	Handle_OpenChannel(element);
       break;
+    case MSG_ID_MSG_ID_OBC_HEARTBEAT:
+    	last_OBC_heartbeat_time = HAL_GetTick();
+    	resetOBCCounter = 0;
+	  break;
     default:
 
       break;
@@ -749,9 +769,15 @@ int main(void)
 		  continue;
 	  }
 
-	  if(HAL_GetTick() - last_heartbeat_time >= 1000) {
+	  if(HAL_GetTick() - last_heartbeat_time >= heartbeat_interval) {
 		  last_heartbeat_time = HAL_GetTick();
 	      CAN_Send_EPS_Heartbeat();
+	  }
+
+	  if(HAL_GetTick() - last_OBC_heartbeat_time >= OBC_heartbeat_reset_time && resetOBCCounter <= resetOBCCounterMax) {
+		  // reset OBC, this assumes EPS is working perfectly
+		  RESET_OBC_CHANNEL();
+		  resetOBCCounter++;
 	  }
 
 	  CAN_ProcessQueue();
