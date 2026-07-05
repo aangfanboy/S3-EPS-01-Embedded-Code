@@ -150,6 +150,7 @@ static void MX_CAN1_Init(void);
 HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
 HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
 HAL_StatusTypeDef RESET_OBC_CHANNEL(void);
+HAL_StatusTypeDef INIT_Protocol(void);
 
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id);
 void CAN_Send_ADC15_Segmented(void);
@@ -193,14 +194,12 @@ GPIO_PinState EN7READ;
 GPIO_PinState EN8READ;
 
 HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state){
-    HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
-
+	HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
     return HAL_OK;
 }
 
 HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state){
-    HAL_GPIO_WritePin(buck_port, buck_pin, state);
-
+	HAL_GPIO_WritePin(buck_port, buck_pin, state);
     return HAL_OK;
 }
 
@@ -208,6 +207,16 @@ HAL_StatusTypeDef RESET_OBC_CHANNEL(void) {
 	HAL_StatusTypeDef jobStatus;
 
 	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_RESET);
+	HAL_Delay(100);
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET);
+
+	return jobStatus;
+}
+
+HAL_StatusTypeDef INIT_Protocol(void) {
+	HAL_StatusTypeDef jobStatus;
+
+	jobStatus = EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET);
 	HAL_Delay(100);
 	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET);
 
@@ -271,7 +280,7 @@ void CAN_ProcessQueueElement(CAN_queue_element *element){
     case MSG_ID_OPEN_CHANNEL_SIGNAL:
     	Handle_OpenChannel(element);
       break;
-    case MSG_ID_MSG_ID_OBC_HEARTBEAT:
+    case MSG_ID_OBC_HEARTBEAT:
     	last_OBC_heartbeat_time = HAL_GetTick();
     	resetOBCCounter = 0;
 	  break;
@@ -700,26 +709,7 @@ int main(void)
   if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
   if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
   if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
-  HAL_Delay(100);
 
-
-  //if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-
-  HAL_Delay(100);
-
-  //if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
 
   HAL_Delay(500);
 
@@ -773,6 +763,8 @@ int main(void)
 	  if (killSwitchStatus == GPIO_PIN_RESET) {
 		  HAL_Delay(1000);
 		  continue;
+	  } else if (initProtocoleCompleted == 1) {
+		  if(INIT_Protocol() == HAL_OK){initProtocoleCompleted = 1;}
 	  }
 
 	  if(HAL_GetTick() - last_heartbeat_time >= heartbeat_interval) {
