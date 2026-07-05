@@ -34,6 +34,17 @@ typedef struct{
     uint8_t seq_type;
     uint8_t seq_count;
 } METUCube_CAN_ID_t;
+
+typedef struct{
+  uint8_t priority;
+  uint8_t sender;
+  uint8_t receiver;
+  uint16_t message_id;
+  uint8_t seq_type;
+  uint8_t seq_count;
+  uint8_t dlc;
+  uint8_t payload[8];
+}CAN_queue_element;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,6 +58,10 @@ typedef struct{
 #define MSG_ID_POWER_GOOD_SIGNAL 0x71
 #define MSG_ID_OPEN_BUCK_SIGNAL 0x72
 #define MSG_ID_OPEN_CHANNEL_SIGNAL 0x73
+#define MSG_ID_OBC_HEARTBEAT 0x00
+#define CAN_QUEUE_SIZE 50
+#define EPS_ID 0x03
+#define BROADCAST_ID 0x0F
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,17 +84,24 @@ uint8_t rxData[8];
 
 uint16_t resistors[10];
 
-uint8_t adc_request_flag = 0 ;
-
 uint32_t last_heartbeat_time = 0;
+uint32_t last_OBC_heartbeat_time = 0;
+const uint32_t heartbeat_interval = 1000;
+const uint32_t OBC_heartbeat_reset_time = 10000;
 
-uint8_t housekeeping_request_flag = 0;
+uint32_t resetOBCCounter = 0;
+const uint32_t resetOBCCounterMax = 5;
 
-uint8_t voltage_request_flag = 0;
+uint8_t initProtocoleCompleted = 0;
 
-uint8_t current_request_flag = 0;
+volatile uint8_t high_head = 0;
+volatile uint8_t low_head = 0;
+volatile uint8_t high_tail = 0;
+volatile uint8_t low_tail = 0;
+volatile uint16_t queue_overflow_counter = 0;
 
-uint8_t powergood_request_flag = 0;
+CAN_queue_element high_queue[CAN_QUEUE_SIZE];
+CAN_queue_element low_queue[CAN_QUEUE_SIZE];
 
 uint32_t canRecCounter = 0;
 
@@ -125,6 +147,11 @@ static void MX_ADC1_Init(void);
 static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
 
+HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
+HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
+HAL_StatusTypeDef RESET_OBC_CHANNEL(void);
+HAL_StatusTypeDef INIT_Protocol(void);
+
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id);
 void CAN_Send_ADC15_Segmented(void);
 void CAN_Send_EPS_Heartbeat(void);
@@ -133,12 +160,21 @@ void CAN_Send_Voltages(void);
 void CAN_Send_Currents(void);
 void CAN_Send_PowerGood(void);
 void CAN_Verify_Open(uint16_t, uint8_t, HAL_StatusTypeDef, uint8_t);
+
+ // newly added 
+uint8_t CAN_IsHighPriority(uint16_t message_id);
+uint8_t CAN_QueuePush(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail,CAN_queue_element *element);
+uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail, CAN_queue_element *element);
+void CAN_ProcessQueue(void);
+void CAN_ProcessQueueElement(CAN_queue_element *element);
+void Handle_OpenBuck(CAN_queue_element *element);
+void Handle_OpenChannel(CAN_queue_element *element);;
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 int errorCounter = 0;
-
 
 volatile uint16_t adc_buffer[15]; // first 10 reads fuse I, remaining 5 reads buck V
 
@@ -157,18 +193,34 @@ GPIO_PinState pGodF10status;
 GPIO_PinState EN7READ;
 GPIO_PinState EN8READ;
 
-HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state)
-{
-    HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
-
+HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state){
+	HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
     return HAL_OK;
 }
 
-HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state)
-{
-    HAL_GPIO_WritePin(buck_port, buck_pin, state);
-
+HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state){
+	HAL_GPIO_WritePin(buck_port, buck_pin, state);
     return HAL_OK;
+}
+
+HAL_StatusTypeDef RESET_OBC_CHANNEL(void) {
+	HAL_StatusTypeDef jobStatus;
+
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_RESET);
+	HAL_Delay(100);
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET);
+
+	return jobStatus;
+}
+
+HAL_StatusTypeDef INIT_Protocol(void) {
+	HAL_StatusTypeDef jobStatus;
+
+	jobStatus = EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET);
+	HAL_Delay(100);
+	jobStatus = EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET);
+
+	return jobStatus;
 }
 
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id) {
@@ -183,6 +235,98 @@ uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id) {
     ext_id |= ((id->seq_count  & 0x7F));
 
     return ext_id;
+}
+
+uint8_t CAN_IsHighPriority(uint16_t message_id){
+  return (message_id == MSG_ID_OPEN_BUCK_SIGNAL || message_id == MSG_ID_OPEN_CHANNEL_SIGNAL || message_id == MSG_ID_POWER_GOOD_SIGNAL);
+}
+
+uint8_t CAN_QueuePush(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail, CAN_queue_element *element) {
+  uint8_t next = (*head + 1) % CAN_QUEUE_SIZE;
+  if (next == *tail) return 0;   // queue full
+  queue[*head] = *element;
+  *head = next;
+  return 1;
+}
+
+uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail, CAN_queue_element *element){
+  if (*tail == *head) return 0;   // empty
+  *element = queue[*tail];
+  *tail = (*tail + 1) % CAN_QUEUE_SIZE;
+  return 1;
+}
+
+void CAN_ProcessQueueElement(CAN_queue_element *element){
+
+  switch (element->message_id){
+    case MSG_ID_ADC_REQUEST:
+    	CAN_Send_ADC15_Segmented();
+      break;
+    case MSG_ID_EPS_HOUSEKEEPING:
+    	CAN_Send_EPS_Housekeeping();
+      break;
+    case MSG_ID_READ_VOLTAGE_CHANNEL:
+    	CAN_Send_Voltages();
+      break;
+    case MSG_ID_READ_CURRENT_CHANNEL:
+    	CAN_Send_Currents();
+      break;
+    case MSG_ID_POWER_GOOD_SIGNAL:
+    	CAN_Send_PowerGood();
+      break;
+    case MSG_ID_OPEN_BUCK_SIGNAL:
+    	Handle_OpenBuck(element);
+      break;
+    case MSG_ID_OPEN_CHANNEL_SIGNAL:
+    	Handle_OpenChannel(element);
+      break;
+    case MSG_ID_OBC_HEARTBEAT:
+    	last_OBC_heartbeat_time = HAL_GetTick();
+    	resetOBCCounter = 0;
+	  break;
+    default:
+
+      break;
+    }
+}
+
+void CAN_ProcessQueue(void){
+  CAN_queue_element element;
+  if(CAN_QueuePop(high_queue, &high_head, &high_tail, &element)){
+    CAN_ProcessQueueElement(&element);
+  } else if(CAN_QueuePop(low_queue, &low_head, &low_tail, &element)){
+    CAN_ProcessQueueElement(&element);
+  }
+}
+
+void Handle_OpenBuck(CAN_queue_element *element){
+  if(element->dlc < 5) return; 
+  uint16_t buck_id = element->payload[0] | (element->payload[1] << 8);
+  uint8_t is_to_open = element->payload[4];
+  if(buck_id < 2 || buck_id > 5) return; // invalid buck id
+
+  if(is_to_open){
+    generalStatus = EPS_Set_Buck_State(gpioBUCK_map[buck_id].port, gpioBUCK_map[buck_id].pin, GPIO_PIN_SET);
+  } else {
+    generalStatus = EPS_Set_Buck_State(gpioBUCK_map[buck_id].port, gpioBUCK_map[buck_id].pin, GPIO_PIN_RESET);
+  }
+
+  CAN_Verify_Open(buck_id, MSG_ID_OPEN_BUCK_SIGNAL, generalStatus, is_to_open);
+}
+
+void Handle_OpenChannel(CAN_queue_element *element){
+  if(element->dlc < 5) return; 
+  uint16_t channel_id = element->payload[0] | (element->payload[1] << 8);
+  uint8_t is_to_open = element->payload[4];
+  if(channel_id < 1 || channel_id > 10) return; 
+
+  if(is_to_open){
+    generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[channel_id].port, gpioFUSE_map[channel_id].pin, GPIO_PIN_SET);
+  } else {
+    generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[channel_id].port, gpioFUSE_map[channel_id].pin, GPIO_PIN_RESET);
+  }
+
+  CAN_Verify_Open(channel_id, MSG_ID_OPEN_CHANNEL_SIGNAL, generalStatus, is_to_open);
 }
 
 void CAN_Send_ADC15_Segmented(void){
@@ -278,16 +422,16 @@ void CAN_Send_EPS_Housekeeping(void){
 	pgod_bits |= ((pGodF6status  == GPIO_PIN_SET) ? 1 : 0) << 5;
 	pgod_bits |= ((pGodF7status  == GPIO_PIN_SET) ? 1 : 0) << 6;
 	pgod_bits |= ((pGodF8status  == GPIO_PIN_SET) ? 1 : 0) << 7;
-    pgod_bits |= ((pGodF9status  == GPIO_PIN_SET) ? 1 : 0) << 8;
-    pgod_bits |= ((pGodF10status == GPIO_PIN_SET) ? 1 : 0) << 9;
+  pgod_bits |= ((pGodF9status  == GPIO_PIN_SET) ? 1 : 0) << 8;
+  pgod_bits |= ((pGodF10status == GPIO_PIN_SET) ? 1 : 0) << 9;
 
-    payload[20] = (uint8_t)(pgod_bits & 0xFF);  // lower
-    payload[21] = (uint8_t)((pgod_bits >> 8) & 0xFF); // higher
+  payload[20] = (uint8_t)(pgod_bits & 0xFF);  // lower
+  payload[21] = (uint8_t)((pgod_bits >> 8) & 0xFF); // higher
 
-    can_id.priority = 0x03;
-    can_id.sender = 0x03;
-    can_id.receiver = 0x00;
-    can_id.message_id = MSG_ID_EPS_HOUSEKEEPING;
+  can_id.priority = 0x03;
+  can_id.sender = 0x03;
+  can_id.receiver = 0x00;
+  can_id.message_id = MSG_ID_EPS_HOUSEKEEPING;
 
 	for(uint8_t segment_number = 0; segment_number<3; segment_number++){
 		can_id.seq_count = segment_number;
@@ -565,26 +709,7 @@ int main(void)
   if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
   if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
   if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
-  HAL_Delay(100);
 
-
-  //if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-
-  HAL_Delay(100);
-
-  //if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  if(EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
-  //if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_SET) == HAL_OK) {} else {errorCounter++;};
 
   HAL_Delay(500);
 
@@ -638,34 +763,23 @@ int main(void)
 	  if (killSwitchStatus == GPIO_PIN_RESET) {
 		  HAL_Delay(1000);
 		  continue;
+	  } else if (initProtocoleCompleted == 1) {
+		  if(INIT_Protocol() == HAL_OK){initProtocoleCompleted = 1;}
 	  }
 
-	  if(adc_request_flag){
-		  adc_request_flag = 0;
-		  CAN_Send_ADC15_Segmented();
-	  }
-
-	  if(HAL_GetTick() - last_heartbeat_time >= 1000) {
+	  if(HAL_GetTick() - last_heartbeat_time >= heartbeat_interval) {
 		  last_heartbeat_time = HAL_GetTick();
 	      CAN_Send_EPS_Heartbeat();
 	  }
 
-	  if(housekeeping_request_flag){
-		  housekeeping_request_flag = 0;
-		  CAN_Send_EPS_Housekeeping();
+	  if(HAL_GetTick() - last_OBC_heartbeat_time >= OBC_heartbeat_reset_time && resetOBCCounter <= resetOBCCounterMax) {
+		  // reset OBC, this assumes EPS is working perfectly
+		  RESET_OBC_CHANNEL();
+		  resetOBCCounter++;
 	  }
-	  if(voltage_request_flag){
-		  voltage_request_flag = 0;
-		  CAN_Send_Voltages();
-	  }
-	  if (current_request_flag) {
-	      current_request_flag = 0;
-	      CAN_Send_Currents();
-	  }
-	  if (powergood_request_flag){
-		  powergood_request_flag = 0;
-		  CAN_Send_PowerGood();
-	  }
+
+	  CAN_ProcessQueue();
+
   }
   /* USER CODE END 3 */
 }
@@ -1057,113 +1171,31 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData);
 	canRecCounter = canRecCounter + 1;
 
-	// ADCS VALUES
-	METUCube_CAN_ID_t req_id;
-    req_id.priority = 0x03;
-    req_id.sender = 0x00;      // OBC
-    req_id.receiver = 0x03;    // EPS
-    req_id.message_id = MSG_ID_ADC_REQUEST;
-    req_id.seq_type = 0x03;    // unsegmented
-    req_id.seq_count = 0;
+  if (rxHeader.IDE != CAN_ID_EXT) return;
+  
+  CAN_queue_element element;
+  
+  element.priority = (rxHeader.ExtId >> 27) & 0x03;
+  element.sender = (rxHeader.ExtId >> 23) & 0x0F;
+  element.receiver = (rxHeader.ExtId >> 19) & 0x0F;
+  element.message_id = (rxHeader.ExtId >> 9) & 0x3FF;
+  element.seq_type = (rxHeader.ExtId >> 7) & 0x03;
+  element.seq_count = rxHeader.ExtId & 0x7F;
+  element.dlc = rxHeader.DLC;
 
-    if (rxHeader.IDE == CAN_ID_EXT && rxHeader.ExtId == Build_CAN_ID_FromStruct(&req_id)) {
-    	adc_request_flag = 1;
-    }
-
-    // HOUSEKEEPING
-    METUCube_CAN_ID_t housekeeping_req_id;
-    housekeeping_req_id.priority = 0x03;
-    housekeeping_req_id.sender = 0x00;
-    housekeeping_req_id.receiver = 0x03;
-    housekeeping_req_id.message_id = MSG_ID_EPS_HOUSEKEEPING;
-    housekeeping_req_id.seq_type = 0x03;
-    housekeeping_req_id.seq_count = 0;
-
-    if (rxHeader.IDE == CAN_ID_EXT && rxHeader.ExtId == Build_CAN_ID_FromStruct(&housekeeping_req_id)){
-    	housekeeping_request_flag = 1;
-    }
-
-    METUCube_CAN_ID_t voltage_req_id;
-    voltage_req_id.priority = 0x03;
-    voltage_req_id.sender = 0x00;
-    voltage_req_id.receiver = 0x03;
-    voltage_req_id.message_id = MSG_ID_READ_VOLTAGE_CHANNEL;
-    voltage_req_id.seq_type = 0x03;
-    voltage_req_id.seq_count = 0;
-
-    if(rxHeader.IDE == CAN_ID_EXT && rxHeader.ExtId == Build_CAN_ID_FromStruct(&voltage_req_id)){
-    	voltage_request_flag = 1;
-    }
-
-    METUCube_CAN_ID_t current_req_id;
-    current_req_id.priority = 0x03;
-    current_req_id.sender = 0x00;
-    current_req_id.receiver = 0x03;
-    current_req_id.message_id = MSG_ID_READ_CURRENT_CHANNEL;
-    current_req_id.seq_type = 0x03;
-    current_req_id.seq_count = 0;
-
-    if (rxHeader.IDE == CAN_ID_EXT && rxHeader.ExtId == Build_CAN_ID_FromStruct(&current_req_id)){
-        current_request_flag = 1;
-    }
-
-    METUCube_CAN_ID_t powergood_req_id;
-    powergood_req_id.priority = 0x03;
-    powergood_req_id.sender = 0x00;
-    powergood_req_id.receiver = 0x03;
-    powergood_req_id.message_id = MSG_ID_POWER_GOOD_SIGNAL;
-    powergood_req_id.seq_type = 0x03;
-    powergood_req_id.seq_count = 0;
-
-    if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&powergood_req_id)){
-        powergood_request_flag = 1;
-    }
-
-    //// open buck request
-    METUCube_CAN_ID_t openbuck_req_id;
-    openbuck_req_id.priority = 0x03;
-    openbuck_req_id.sender = 0x00;
-    openbuck_req_id.receiver = 0x03;
-    openbuck_req_id.message_id = MSG_ID_OPEN_BUCK_SIGNAL;
-    openbuck_req_id.seq_type = 0x03;
-    openbuck_req_id.seq_count = 0;
-
-    if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&openbuck_req_id)){
-    	deger =  rxData[0] | (rxData[1] << 8);
-
-    	if (rxData[4] == 1){
-    		generalStatus = EPS_Set_Buck_State(gpioBUCK_map[deger].port, gpioBUCK_map[deger].pin, GPIO_PIN_SET);
-		} else if (rxData[4] == 0) {
-			generalStatus = EPS_Set_Buck_State(gpioBUCK_map[deger].port, gpioBUCK_map[deger].pin, GPIO_PIN_RESET);
-		}	else {
-		    generalStatus = HAL_ERROR;
-		}
-
-    	CAN_Verify_Open(deger, MSG_ID_OPEN_BUCK_SIGNAL, generalStatus, rxData[4]);
-    }
-
-    //// open channel request
-    METUCube_CAN_ID_t openchannel_req_id;
-    openchannel_req_id.priority = 0x03;
-    openchannel_req_id.sender = 0x00;
-    openchannel_req_id.receiver = 0x03;
-    openchannel_req_id.message_id = MSG_ID_OPEN_CHANNEL_SIGNAL;
-    openchannel_req_id.seq_type = 0x03;
-    openchannel_req_id.seq_count = 0;
-
-    if (rxHeader.IDE == CAN_ID_EXT &&rxHeader.ExtId == Build_CAN_ID_FromStruct(&openchannel_req_id)){
-    	deger =  rxData[0] | (rxData[1] << 8);
-
-    	if (rxData[4] == 1){
-    		generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[deger].port, gpioFUSE_map[deger].pin, GPIO_PIN_SET);
-    	} else if (rxData[4] == 0) {
-    		generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[deger].port, gpioFUSE_map[deger].pin, GPIO_PIN_RESET);
-    	}	else {
-    	    generalStatus = HAL_ERROR;
-    	}
-
-    	CAN_Verify_Open(deger, MSG_ID_OPEN_CHANNEL_SIGNAL, generalStatus, rxData[4]);
-    }
+  if(element.receiver != EPS_ID && element.receiver != BROADCAST_ID) return;
+  for (uint8_t i = 0; i < element.dlc; i++) {
+      element.payload[i] = rxData[i];
+  }
+  uint8_t ok;
+  if(CAN_IsHighPriority(element.message_id)) {
+    ok = CAN_QueuePush(high_queue, &high_head, &high_tail, &element);
+  }else {
+    ok = CAN_QueuePush(low_queue, &low_head, &low_tail, &element);
+  }
+  if(!ok) {
+    queue_overflow_counter++;
+  }
 
 }
 
