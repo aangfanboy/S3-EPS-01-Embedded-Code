@@ -92,6 +92,8 @@ const uint32_t OBC_heartbeat_reset_time = 10000;
 uint32_t resetOBCCounter = 0;
 const uint32_t resetOBCCounterMax = 5;
 
+uint8_t initProtocoleCompleted = 0;
+
 volatile uint8_t high_head = 0;
 volatile uint8_t low_head = 0;
 volatile uint8_t high_tail = 0;
@@ -144,6 +146,10 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_CAN1_Init(void);
 /* USER CODE BEGIN PFP */
+
+HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
+HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef*, uint16_t, GPIO_PinState);
+HAL_StatusTypeDef RESET_OBC_CHANNEL(void);
 
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id);
 void CAN_Send_ADC15_Segmented(void);
