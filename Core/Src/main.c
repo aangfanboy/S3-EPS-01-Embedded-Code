@@ -782,7 +782,27 @@ int main(void)
 	  pGodF10status = HAL_GPIO_ReadPin(PGOD_F_10_GPIO_Port, PGOD_F_10_Pin);
 
 	  if (killSwitchStatus == GPIO_PIN_RESET) {
+
+		  if(EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Buck_State(EN_B_4_GPIO_Port, EN_B_4_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Buck_State(EN_B_5_GPIO_Port, EN_B_5_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+
+		  HAL_Delay(100);
+
+		  if(EPS_Set_Fuse_State(EN_F_1_GPIO_Port, EN_F_1_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_2_GPIO_Port, EN_F_2_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_3_GPIO_Port, EN_F_3_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_4_GPIO_Port, EN_F_4_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_5_GPIO_Port, EN_F_5_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_6_GPIO_Port, EN_F_6_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_7_GPIO_Port, EN_F_7_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  if(EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_RESET) == HAL_OK) {} else {errorCounter++;};
+		  initProtocoleCompleted = 0;
 		  HAL_Delay(1000);
+
 		  continue;
 	  } else if (initProtocoleCompleted == 0) {
 		  if(INIT_Protocol() == HAL_OK){initProtocoleCompleted = 1;}
