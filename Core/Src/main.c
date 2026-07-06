@@ -153,22 +153,22 @@ HAL_StatusTypeDef RESET_OBC_CHANNEL(void);
 HAL_StatusTypeDef INIT_Protocol(void);
 
 uint32_t Build_CAN_ID_FromStruct(METUCube_CAN_ID_t *id);
-void CAN_Send_ADC15_Segmented(void);
-void CAN_Send_EPS_Heartbeat(void);
-void CAN_Send_EPS_Housekeeping(void);
-void CAN_Send_Voltages(void);
-void CAN_Send_Currents(void);
-void CAN_Send_PowerGood(void);
-void CAN_Verify_Open(uint16_t, uint8_t, HAL_StatusTypeDef, uint8_t);
+HAL_StatusTypeDef CAN_Send_ADC15_Segmented(void);
+HAL_StatusTypeDef CAN_Send_EPS_Heartbeat(void);
+HAL_StatusTypeDef CAN_Send_EPS_Housekeeping(void);
+HAL_StatusTypeDef CAN_Send_Voltages(void);
+HAL_StatusTypeDef CAN_Send_Currents(void);
+HAL_StatusTypeDef CAN_Send_PowerGood(void);
+HAL_StatusTypeDef CAN_Verify_Open(uint16_t, uint8_t, HAL_StatusTypeDef, uint8_t);
 
  // newly added 
 uint8_t CAN_IsHighPriority(uint16_t message_id);
 uint8_t CAN_QueuePush(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail,CAN_queue_element *element);
 uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail, CAN_queue_element *element);
-void CAN_ProcessQueue(void);
-void CAN_ProcessQueueElement(CAN_queue_element *element);
-void Handle_OpenBuck(CAN_queue_element *element);
-void Handle_OpenChannel(CAN_queue_element *element);;
+HAL_StatusTypeDef CAN_ProcessQueue(void);
+HAL_StatusTypeDef CAN_ProcessQueueElement(CAN_queue_element *element);
+HAL_StatusTypeDef Handle_OpenBuck(CAN_queue_element *element);
+HAL_StatusTypeDef Handle_OpenChannel(CAN_queue_element *element);
 
 /* USER CODE END PFP */
 
@@ -250,86 +250,84 @@ uint8_t CAN_QueuePush(CAN_queue_element *queue, volatile uint8_t *head, volatile
 }
 
 uint8_t CAN_QueuePop(CAN_queue_element *queue, volatile uint8_t *head, volatile uint8_t *tail, CAN_queue_element *element){
-  if (*tail == *head) return 0;   // empty
+  __disable_irq();
+  if (*tail == *head) {
+    __enable_irq();
+    return 0;   // empty
+  }
   *element = queue[*tail];
   *tail = (*tail + 1) % CAN_QUEUE_SIZE;
+  __enable_irq();
   return 1;
 }
 
-void CAN_ProcessQueueElement(CAN_queue_element *element){
+HAL_StatusTypeDef CAN_ProcessQueueElement(CAN_queue_element *element){
 
   switch (element->message_id){
     case MSG_ID_ADC_REQUEST:
-    	CAN_Send_ADC15_Segmented();
-      break;
+    	return CAN_Send_ADC15_Segmented();
     case MSG_ID_EPS_HOUSEKEEPING:
-    	CAN_Send_EPS_Housekeeping();
-      break;
+    	return CAN_Send_EPS_Housekeeping();
     case MSG_ID_READ_VOLTAGE_CHANNEL:
-    	CAN_Send_Voltages();
-      break;
+    	return CAN_Send_Voltages();
     case MSG_ID_READ_CURRENT_CHANNEL:
-    	CAN_Send_Currents();
-      break;
+    	return CAN_Send_Currents();
     case MSG_ID_POWER_GOOD_SIGNAL:
-    	CAN_Send_PowerGood();
-      break;
+    	return CAN_Send_PowerGood();
     case MSG_ID_OPEN_BUCK_SIGNAL:
-    	Handle_OpenBuck(element);
-      break;
+    	return Handle_OpenBuck(element);
     case MSG_ID_OPEN_CHANNEL_SIGNAL:
-    	Handle_OpenChannel(element);
-      break;
+    	return Handle_OpenChannel(element);
     case MSG_ID_OBC_HEARTBEAT:
     	last_OBC_heartbeat_time = HAL_GetTick();
     	resetOBCCounter = 0;
-	  break;
+      return HAL_OK;
     default:
-
-      break;
+      return HAL_ERROR;
     }
 }
 
-void CAN_ProcessQueue(void){
+HAL_StatusTypeDef CAN_ProcessQueue(void){
   CAN_queue_element element;
   if(CAN_QueuePop(high_queue, &high_head, &high_tail, &element)){
-    CAN_ProcessQueueElement(&element);
+    return CAN_ProcessQueueElement(&element);
   } else if(CAN_QueuePop(low_queue, &low_head, &low_tail, &element)){
-    CAN_ProcessQueueElement(&element);
+    return CAN_ProcessQueueElement(&element);
   }
+  return HAL_OK;
 }
 
-void Handle_OpenBuck(CAN_queue_element *element){
-  if(element->dlc < 5) return; 
+HAL_StatusTypeDef Handle_OpenBuck(CAN_queue_element *element){
+  if(element->dlc < 5) return HAL_ERROR; 
   uint16_t buck_id = element->payload[0] | (element->payload[1] << 8);
   uint8_t is_to_open = element->payload[4];
-  if(buck_id < 2 || buck_id > 5) return; // invalid buck id
+
+  if(buck_id < 2 || buck_id > 5) return CAN_Verify_Open(buck_id, MSG_ID_OPEN_BUCK_SIGNAL, HAL_ERROR, is_to_open); // invalid buck id
 
   if(is_to_open){
     generalStatus = EPS_Set_Buck_State(gpioBUCK_map[buck_id].port, gpioBUCK_map[buck_id].pin, GPIO_PIN_SET);
   } else {
     generalStatus = EPS_Set_Buck_State(gpioBUCK_map[buck_id].port, gpioBUCK_map[buck_id].pin, GPIO_PIN_RESET);
   }
-
-  CAN_Verify_Open(buck_id, MSG_ID_OPEN_BUCK_SIGNAL, generalStatus, is_to_open);
+  return CAN_Verify_Open(buck_id, MSG_ID_OPEN_BUCK_SIGNAL, generalStatus, is_to_open);
 }
 
-void Handle_OpenChannel(CAN_queue_element *element){
-  if(element->dlc < 5) return; 
+HAL_StatusTypeDef Handle_OpenChannel(CAN_queue_element *element){
+  if(element->dlc < 5) return HAL_ERROR; 
   uint16_t channel_id = element->payload[0] | (element->payload[1] << 8);
   uint8_t is_to_open = element->payload[4];
-  if(channel_id < 1 || channel_id > 10) return; 
+  if(channel_id < 1 || channel_id > 10) return CAN_Verify_Open(channel_id, MSG_ID_OPEN_CHANNEL_SIGNAL, HAL_ERROR, is_to_open); 
 
   if(is_to_open){
     generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[channel_id].port, gpioFUSE_map[channel_id].pin, GPIO_PIN_SET);
   } else {
     generalStatus = EPS_Set_Fuse_State(gpioFUSE_map[channel_id].port, gpioFUSE_map[channel_id].pin, GPIO_PIN_RESET);
   }
-
-  CAN_Verify_Open(channel_id, MSG_ID_OPEN_CHANNEL_SIGNAL, generalStatus, is_to_open);
+  return CAN_Verify_Open(channel_id, MSG_ID_OPEN_CHANNEL_SIGNAL, generalStatus, is_to_open);
 }
 
-void CAN_Send_ADC15_Segmented(void){
+HAL_StatusTypeDef CAN_Send_ADC15_Segmented(void){
+
 	METUCube_CAN_ID_t can_id;
 	for(uint8_t segment_number = 0; segment_number<4; segment_number++ ){
 		can_id.priority = 0x03; //low
@@ -366,14 +364,16 @@ void CAN_Send_ADC15_Segmented(void){
 				txData[2*i +1] = 0;
 			}
 		}
-		HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
-
+		HAL_StatusTypeDef status = HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+    if (status != HAL_OK) return status;
+    
 		HAL_Delay(2);
 
 	}
+	return HAL_OK;
 }
 
-void CAN_Send_EPS_Heartbeat(void){
+HAL_StatusTypeDef CAN_Send_EPS_Heartbeat(void){
 	METUCube_CAN_ID_t can_id;
 	can_id.priority = 0x03;
 	can_id.sender = 0x03;
@@ -390,11 +390,11 @@ void CAN_Send_EPS_Heartbeat(void){
 
 	txData[0] = 0x65;
 
-	HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+	return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
 
 }
 
-void CAN_Send_EPS_Housekeeping(void){
+HAL_StatusTypeDef CAN_Send_EPS_Housekeeping(void){
 	METUCube_CAN_ID_t can_id;
 	uint8_t payload[22];
 	// current readings
@@ -473,13 +473,17 @@ void CAN_Send_EPS_Housekeeping(void){
 			txData[5] = payload[21];
 			txHeader.DLC = 6;
 		}
-		HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+		HAL_StatusTypeDef status = HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+		if (status != HAL_OK) {
+			return status;
+		}
 		HAL_Delay(2);
 
 	}
+  return HAL_OK;
 }
 
-void CAN_Send_Voltages(void){
+HAL_StatusTypeDef CAN_Send_Voltages(void){
 	METUCube_CAN_ID_t can_id;
 	uint8_t payload[10];
 	uint16_t voltage1 = (uint16_t)((adc_buffer[10] * 3300.0f / 4095.0f) * ((47000.0f + 15800.0f) / 15800.0f));
@@ -535,13 +539,17 @@ void CAN_Send_Voltages(void){
 			txData[0] = payload[8];
 			txData[1] = payload[9];
 		}
-		HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+		HAL_StatusTypeDef status = HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+		if (status != HAL_OK) {
+			return status;
+		}
 		HAL_Delay(2);
 	}
+  return HAL_OK;
 
 }
 
-void CAN_Send_Currents(void){
+HAL_StatusTypeDef CAN_Send_Currents(void){
     METUCube_CAN_ID_t can_id;
     uint8_t payload[10];
 
@@ -593,19 +601,23 @@ void CAN_Send_Currents(void){
             txData[1] = payload[9];
         }
 
-        HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+        HAL_StatusTypeDef status = HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+        if (status != HAL_OK) {
+            return status;
+        }
         HAL_Delay(2);
     }
+  return HAL_OK;
 }
 
-void CAN_Verify_Open(uint16_t channelBuckId, uint8_t messageId, HAL_StatusTypeDef endStatus, uint8_t isToOpen){
+HAL_StatusTypeDef CAN_Verify_Open(uint16_t channelBuckId, uint8_t messageId, HAL_StatusTypeDef endStatus, uint8_t isToOpen){
     METUCube_CAN_ID_t can_id;
     can_id.priority = 0x03;
     can_id.sender = 0x03;
     can_id.receiver = 0x00;
     can_id.message_id = messageId;
     can_id.seq_type = 0x03;
-	can_id.seq_count = 0x00;
+	  can_id.seq_count = 0x00;
 
 	uint8_t statusToSend = (uint8_t)endStatus;
 
@@ -619,12 +631,14 @@ void CAN_Verify_Open(uint16_t channelBuckId, uint8_t messageId, HAL_StatusTypeDe
     txHeader.IDE = CAN_ID_EXT;
     txHeader.RTR = CAN_RTR_DATA;
     txHeader.TransmitGlobalTime = DISABLE;
+    txHeader.DLC = 5;
 
-	HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+  return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+
 }
 
 
-void CAN_Send_PowerGood(void){
+HAL_StatusTypeDef CAN_Send_PowerGood(void){
 
     METUCube_CAN_ID_t can_id;
     uint16_t power_good = 0;
@@ -654,7 +668,7 @@ void CAN_Send_PowerGood(void){
     txHeader.TransmitGlobalTime = DISABLE;
     txData[0] = (uint8_t)(power_good & 0xFF);
     txData[1] = (uint8_t)((power_good >> 8) & 0xFF);
-    HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+    return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
 }
 
 /* USER CODE END 0 */
@@ -731,9 +745,16 @@ int main(void)
   canFilter.FilterScale = CAN_FILTERSCALE_32BIT;
   canFilter.SlaveStartFilterBank = 14;
 
-  HAL_CAN_ConfigFilter(&hcan1, &canFilter);
-  HAL_CAN_Start(&hcan1);
-  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  if(HAL_CAN_ConfigFilter(&hcan1, &canFilter) != HAL_OK) {
+      errorCounter++;
+  }
+  if(HAL_CAN_Start(&hcan1) != HAL_OK) {
+      errorCounter++;
+  }
+  if(HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+      errorCounter++;
+  }
+
 
   for(uint8_t i = 0; i<10; i++){
   		resistors[i] = 2000;
@@ -763,22 +784,28 @@ int main(void)
 	  if (killSwitchStatus == GPIO_PIN_RESET) {
 		  HAL_Delay(1000);
 		  continue;
-	  } else if (initProtocoleCompleted == 1) {
+	  } else if (initProtocoleCompleted == 0) {
 		  if(INIT_Protocol() == HAL_OK){initProtocoleCompleted = 1;}
 	  }
 
 	  if(HAL_GetTick() - last_heartbeat_time >= heartbeat_interval) {
 		  last_heartbeat_time = HAL_GetTick();
-	      CAN_Send_EPS_Heartbeat();
+	      if(CAN_Send_EPS_Heartbeat() != HAL_OK) {
+	          errorCounter++;
+	      }
 	  }
 
 	  if(HAL_GetTick() - last_OBC_heartbeat_time >= OBC_heartbeat_reset_time && resetOBCCounter <= resetOBCCounterMax) {
 		  // reset OBC, this assumes EPS is working perfectly
-		  RESET_OBC_CHANNEL();
+		  if(RESET_OBC_CHANNEL() != HAL_OK) {
+			  errorCounter++;
+		  }
 		  resetOBCCounter++;
 	  }
 
-	  CAN_ProcessQueue();
+	  if(CAN_ProcessQueue() != HAL_OK) {
+		  errorCounter++;
+	  }
 
   }
   /* USER CODE END 3 */
@@ -1168,7 +1195,10 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
-	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData);
+	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK) {
+    errorCounter++;
+		return;
+	}
 	canRecCounter = canRecCounter + 1;
 
   if (rxHeader.IDE != CAN_ID_EXT) return;
