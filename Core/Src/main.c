@@ -802,7 +802,12 @@ int main(void)
       }
     }
 
-  if (killSwitchActive) continue;
+    if (killSwitchActive) {
+        HAL_SuspendTick();
+        HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+        HAL_ResumeTick();
+        continue;
+    }
 
   if (initProtocoleCompleted == 0){
     if (INIT_Protocol() == HAL_OK){
