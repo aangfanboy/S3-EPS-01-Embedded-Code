@@ -107,6 +107,7 @@ void Error_Handler(void);
 #define EN_B_2_GPIO_Port GPIOE
 #define KILL_SWITCH_Pin GPIO_PIN_7
 #define KILL_SWITCH_GPIO_Port GPIOC
+#define KILL_SWITCH_EXTI_IRQn EXTI9_5_IRQn
 #define EN_F_2_Pin GPIO_PIN_8
 #define EN_F_2_GPIO_Port GPIOC
 #define PGOD_F_2_Pin GPIO_PIN_9

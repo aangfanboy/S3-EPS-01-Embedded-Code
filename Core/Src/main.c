@@ -94,7 +94,7 @@ const uint32_t resetOBCCounterMax = 5;
 
 uint8_t initProtocoleCompleted = 0;
 uint8_t killSwitchActive = 0;
-uint8_t killSwitchChanged = 0;
+uint8_t killSwitchChanged = 1;
 
 volatile uint8_t high_head = 0;
 volatile uint8_t low_head = 0;
@@ -794,11 +794,11 @@ int main(void)
       killSwitchStatus = HAL_GPIO_ReadPin(GPIOC, KILL_SWITCH_Pin);
 
       if (killSwitchStatus == GPIO_PIN_RESET){
-        EPS_Shutdown_All_Channels();
-        initProtocoleCompleted = 0;
-        killSwitchActive = 1;
+    	    EPS_Shutdown_All_Channels();
+        	initProtocoleCompleted = 0;
+        	killSwitchActive = 1;
       } else{
-      killSwitchActive = 0;
+    	  	  killSwitchActive = 0;
       }
     }
 
@@ -1171,11 +1171,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : KILL_SWITCH_Pin PGOD_F_2_Pin */
-  GPIO_InitStruct.Pin = KILL_SWITCH_Pin|PGOD_F_2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pin : KILL_SWITCH_Pin */
+  GPIO_InitStruct.Pin = KILL_SWITCH_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(KILL_SWITCH_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : EN_F_2_Pin */
   GPIO_InitStruct.Pin = EN_F_2_Pin;
@@ -1183,6 +1183,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(EN_F_2_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PGOD_F_2_Pin */
+  GPIO_InitStruct.Pin = PGOD_F_2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(PGOD_F_2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : EN_F_1_Pin EN_B_3_Pin */
   GPIO_InitStruct.Pin = EN_F_1_Pin|EN_B_3_Pin;
@@ -1218,6 +1224,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -1260,11 +1270,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
   }
 
 }
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   if (GPIO_Pin == KILL_SWITCH_Pin){
         killSwitchChanged = 1;
   }
-
 }
 
 /* USER CODE END 4 */
