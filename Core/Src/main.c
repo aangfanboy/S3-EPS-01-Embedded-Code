@@ -45,6 +45,18 @@ typedef struct{
   uint8_t dlc;
   uint8_t payload[8];
 }CAN_queue_element;
+
+typedef enum {
+    PGOD_IDLE = 0,
+    PGOD_WAITING,     //  waiting before next retry
+    PGOD_VERIFYING    // checking if PGOOD came back
+} PGOD_RetryPhase_t;
+ 
+typedef struct {
+    PGOD_RetryPhase_t phase;
+    uint8_t           retry_count;
+    uint32_t          deadline;   // HAL_GetTick target for next action
+} PGOD_RetryState_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -59,9 +71,21 @@ typedef struct{
 #define MSG_ID_OPEN_BUCK_SIGNAL 0x72
 #define MSG_ID_OPEN_CHANNEL_SIGNAL 0x73
 #define MSG_ID_OBC_HEARTBEAT 0x00
+#define MSG_ID_FUSE_STATE_LOG 0x97
+
 #define CAN_QUEUE_SIZE 50
 #define EPS_ID 0x03
 #define BROADCAST_ID 0x0F
+
+#define PGOD_RETRY_MAX          3
+#define PGOD_RETRY_INTERVAL_MS  2500
+#define PGOD_VERIFY_DELAY_MS    200
+
+#define PGOD_EVT_FAULT      0x01   // channel shut off
+#define PGOD_EVT_RETRY      0x02   // attempting to re-enable
+#define PGOD_EVT_OK         0x03   // channel back online
+#define PGOD_EVT_FAIL       0x04   // will try again
+#define PGOD_EVT_ABANDONED  0x05   // max retries exhausted, channel stays off
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -95,6 +119,7 @@ const uint32_t resetOBCCounterMax = 5;
 uint8_t initProtocoleCompleted = 0;
 uint8_t killSwitchActive = 0;
 uint8_t killSwitchChanged = 1;
+uint8_t canBusReady = 0;
 
 volatile uint8_t high_head = 0;
 volatile uint8_t low_head = 0;
@@ -139,7 +164,24 @@ const GPIOPin_Map_t gpioFUSE_map[] = {
 		{EN_F_10_GPIO_Port, EN_F_10_Pin},
 };
 
+const GPIOPin_Map_t pgodPinMap[] = { 
+  {NULL, 0},  
+  {PGOD_F_1_GPIO_Port,  PGOD_F_1_Pin},           // ch1, placeholder not used
+  {PGOD_F_2_GPIO_Port,  PGOD_F_2_Pin},           // ch2
+  {PGOD_F_3_GPIO_Port,  PGOD_F_3_Pin},           // ch3
+  {PGOD_F_4_GPIO_Port,  PGOD_F_4_Pin},           // ch4
+  {PGOD_F_5_GPIO_Port,  PGOD_F_5_Pin},           // ch5
+  {PGOD_F_6_GPIO_Port,  PGOD_F_6_Pin},           // ch6
+  {PGOD_F_7_GPIO_Port,  PGOD_F_7_Pin},           // ch7
+  {PGOD_F_8_GPIO_Port,  PGOD_F_8_Pin},           // ch8
+  {PGOD_F_9_GPIO_Port,  PGOD_F_9_Pin},           // ch9
+  {PGOD_F_10_GPIO_Port, PGOD_F_10_Pin},          // ch10
+};
+
+PGOD_RetryState_t pgodRetry[11]; // index 0 will not be used
+volatile uint16_t pgodFaultFlags = 0;
 /* USER CODE END PV */
+
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -173,6 +215,10 @@ HAL_StatusTypeDef Handle_OpenBuck(CAN_queue_element *element);
 HAL_StatusTypeDef Handle_OpenChannel(CAN_queue_element *element);
 HAL_StatusTypeDef EPS_Shutdown_All_Channels(void);
 
+void              EPS_Reset_PGOD_States(void);
+HAL_StatusTypeDef CAN_Send_PGOD_Event(uint8_t channel, uint8_t event, uint8_t retry_count, uint8_t pgood_now);
+HAL_StatusTypeDef PGOD_ProcessRetry(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -196,6 +242,23 @@ GPIO_PinState pGodF10status;
 GPIO_PinState EN7READ;
 GPIO_PinState EN8READ;
 
+static GPIO_PinState* pgodStatusVar(uint8_t ch) {
+    static GPIO_PinState dummy = GPIO_PIN_RESET;
+    switch (ch) {
+        case 1:  return &pGodF1status;
+        case 2:  return &pGodF2status;
+        case 3:  return &pGodF3status;
+        case 4:  return &pGodF4status;
+        case 5:  return &pGodF5status;
+        case 6:  return &pGodF6status;
+        case 7:  return &pGodF7status;
+        case 8:  return &pGodF8status;
+        case 9:  return &pGodF9status;
+        case 10: return &pGodF10status;
+        default: return &dummy;
+    }
+}
+
 HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin, GPIO_PinState state){
 	HAL_GPIO_WritePin(fuse_port, fuse_pin, state);
     return HAL_OK;
@@ -204,6 +267,14 @@ HAL_StatusTypeDef EPS_Set_Fuse_State(GPIO_TypeDef* fuse_port, uint16_t fuse_pin,
 HAL_StatusTypeDef EPS_Set_Buck_State(GPIO_TypeDef* buck_port, uint16_t buck_pin, GPIO_PinState state){
 	HAL_GPIO_WritePin(buck_port, buck_pin, state);
     return HAL_OK;
+}
+void EPS_Reset_PGOD_States(void) { // clears all PGOD retry states and fault flags 
+    for (uint8_t ch = 0; ch <= 10; ch++) {
+        pgodRetry[ch].phase       = PGOD_IDLE;
+        pgodRetry[ch].retry_count = 0;
+        pgodRetry[ch].deadline    = 0;
+    }
+    pgodFaultFlags = 0;
 }
 
 HAL_StatusTypeDef RESET_OBC_CHANNEL(void) {
@@ -673,6 +744,8 @@ HAL_StatusTypeDef CAN_Send_PowerGood(void){
     txData[1] = (uint8_t)((power_good >> 8) & 0xFF);
     return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
 }
+
+
 HAL_StatusTypeDef EPS_Shutdown_All_Channels(void){
   EPS_Set_Buck_State(EN_B_2_GPIO_Port, EN_B_2_Pin, GPIO_PIN_RESET);
   EPS_Set_Buck_State(EN_B_3_GPIO_Port, EN_B_3_Pin, GPIO_PIN_RESET);
@@ -688,9 +761,101 @@ HAL_StatusTypeDef EPS_Shutdown_All_Channels(void){
   EPS_Set_Fuse_State(EN_F_8_GPIO_Port, EN_F_8_Pin, GPIO_PIN_RESET);
   EPS_Set_Fuse_State(EN_F_9_GPIO_Port, EN_F_9_Pin, GPIO_PIN_RESET);
   EPS_Set_Fuse_State(EN_F_10_GPIO_Port, EN_F_10_Pin, GPIO_PIN_RESET);
+  EPS_Reset_PGOD_States();
   return HAL_OK;
 }
 
+HAL_StatusTypeDef CAN_Send_PGOD_Event(uint8_t channel, uint8_t event, uint8_t retry_count, uint8_t pgood_now){
+    if (!canBusReady) return HAL_OK;   // silently skip before CAN is up
+ 
+    METUCube_CAN_ID_t can_id;
+    can_id.priority   = 0x01;          // high priority
+    can_id.sender     = EPS_ID;
+    can_id.receiver   = 0x00;          // OBC
+    can_id.message_id = MSG_ID_FUSE_STATE_LOG;
+    can_id.seq_type   = 0x03;       
+    can_id.seq_count  = 0;
+ 
+    txHeader.ExtId = Build_CAN_ID_FromStruct(&can_id);
+    txHeader.IDE   = CAN_ID_EXT;
+    txHeader.RTR   = CAN_RTR_DATA;
+    txHeader.DLC   = 4;
+    txHeader.TransmitGlobalTime = DISABLE;
+ 
+    txData[0] = channel;
+    txData[1] = event;
+    txData[2] = retry_count;
+    txData[3] = pgood_now;
+ 
+    return HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox);
+}
+HAL_StatusTypeDef PGOD_ProcessRetry(void) {
+    HAL_StatusTypeDef ret = HAL_OK;
+    uint32_t now = HAL_GetTick();
+ 
+    /* Phase 0: pick up new faults set by ISR */
+    uint16_t flags;
+    __disable_irq();
+    flags = pgodFaultFlags;
+    pgodFaultFlags = 0;
+    __enable_irq();
+ 
+    for (uint8_t ch = 2; ch <= 10; ch++) {
+        if (!(flags & (1 << ch))) continue;
+        if (pgodRetry[ch].phase != PGOD_IDLE) continue;   // already retrying
+ 
+        /* Channel was just shut off by ISR — notify OBC and start retry */
+        *pgodStatusVar(ch) = GPIO_PIN_RESET;
+        if (CAN_Send_PGOD_Event(ch, PGOD_EVT_FAULT, 0, 0) != HAL_OK) ret = HAL_ERROR;
+ 
+        pgodRetry[ch].phase       = PGOD_WAITING;
+        pgodRetry[ch].retry_count = 0;
+        pgodRetry[ch].deadline    = now + PGOD_RETRY_INTERVAL_MS;
+    }
+ 
+    /* process active retries  */
+    for (uint8_t ch = 2; ch <= 10; ch++) {
+        PGOD_RetryState_t *st = &pgodRetry[ch];
+ 
+        if (st->phase == PGOD_WAITING) {
+            if ((int32_t)(now - st->deadline) < 0) continue;  
+ 
+            st->retry_count++;
+ 
+            /* Re-enable the channel */
+            EPS_Set_Fuse_State(gpioFUSE_map[ch].port, gpioFUSE_map[ch].pin, GPIO_PIN_SET);
+            if (CAN_Send_PGOD_Event(ch, PGOD_EVT_RETRY, st->retry_count, 0) != HAL_OK) ret = HAL_ERROR;
+            st->phase    = PGOD_VERIFYING;
+            st->deadline = now + PGOD_VERIFY_DELAY_MS;
+ 
+        } else if (st->phase == PGOD_VERIFYING) {
+            if ((int32_t)(now - st->deadline) < 0) continue;
+ 
+            GPIO_PinState pgood = HAL_GPIO_ReadPin(pgodPinMap[ch].port, pgodPinMap[ch].pin);
+            *pgodStatusVar(ch) = pgood;
+ 
+            if (pgood == GPIO_PIN_SET) {
+                /*  channel is back online */
+                if (CAN_Send_PGOD_Event(ch, PGOD_EVT_OK, st->retry_count, 1) != HAL_OK) ret = HAL_ERROR;
+                st->phase = PGOD_IDLE;
+            } else {
+                /* shut off and decide */
+                EPS_Set_Fuse_State(gpioFUSE_map[ch].port, gpioFUSE_map[ch].pin, GPIO_PIN_RESET);
+ 
+                if (st->retry_count < PGOD_RETRY_MAX) {
+                     if (CAN_Send_PGOD_Event(ch, PGOD_EVT_FAIL, st->retry_count, 0) != HAL_OK) ret = HAL_ERROR;
+                    st->phase    = PGOD_WAITING;
+                    st->deadline = now + PGOD_RETRY_INTERVAL_MS;
+                } else {
+                    /* Give up */
+                    if (CAN_Send_PGOD_Event(ch, PGOD_EVT_ABANDONED, st->retry_count, 0) != HAL_OK) ret = HAL_ERROR;
+                    st->phase = PGOD_IDLE;
+                }
+            }
+        }
+    }
+    return ret;
+}
 /* USER CODE END 0 */
 
 /**
@@ -747,6 +912,7 @@ int main(void)
 
   HAL_Delay(500);
 
+  EPS_Reset_PGOD_States();
   // start DMA for V and I Read
   if(HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 15) != HAL_OK){
 	  errorCounter++;
@@ -770,7 +936,10 @@ int main(void)
   }
   if(HAL_CAN_Start(&hcan1) != HAL_OK) {
       errorCounter++;
+  } else {
+    canBusReady = 1;
   }
+
   if(HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
       errorCounter++;
   }
@@ -843,6 +1012,8 @@ int main(void)
 	  if(CAN_ProcessQueue() != HAL_OK) {
 		  errorCounter++;
 	  }
+
+     if(PGOD_ProcessRetry() != HAL_OK) errorCounter++;
 
   }
   /* USER CODE END 3 */
@@ -1279,7 +1450,15 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   if (GPIO_Pin == KILL_SWITCH_Pin){
         killSwitchChanged = 1;
+        return;
   }
+  for (uint8_t ch = 2; ch <= 10; ch++) {
+        if (GPIO_Pin == pgodPinMap[ch].pin) {
+            EPS_Set_Fuse_State(gpioFUSE_map[ch].port, gpioFUSE_map[ch].pin, GPIO_PIN_RESET);   // immediate shutdown
+            pgodFaultFlags |= (1 << ch);                  // signal main loop
+            return;
+        }
+    }
 }
 
 /* USER CODE END 4 */
